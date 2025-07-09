@@ -21,6 +21,14 @@ declare -g REPO_URL=""
 cleanup_deployment() {
     local exit_code=$?
     
+    print_log "DEBUG" "🧹 Cleanup trap executed (exit_code: $exit_code, caller: ${FUNCNAME[1]:-unknown})"
+    
+    # Avoid cleanup during critical operations
+    if [[ "${CLEANUP_TRAP_SET:-true}" == "false" ]]; then
+        print_log "DEBUG" "Cleanup temporarily disabled, skipping"
+        return $exit_code
+    fi
+    
     print_log "STATUS" "🧹 Performing cleanup..."
     
     # Return to original branch if needed
@@ -53,7 +61,23 @@ cleanup_deployment() {
 
 # 🛡️ Set up cleanup trap
 setup_cleanup_trap() {
+    print_log "DEBUG" "Setting up cleanup trap"
     trap cleanup_deployment EXIT INT TERM
+    export CLEANUP_TRAP_SET="true"
+}
+
+# 🛡️ Disable cleanup trap temporarily
+disable_cleanup_trap() {
+    print_log "DEBUG" "Temporarily disabling cleanup trap"
+    trap - EXIT INT TERM
+    export CLEANUP_TRAP_SET="false"
+}
+
+# 🛡️ Re-enable cleanup trap
+enable_cleanup_trap() {
+    print_log "DEBUG" "Re-enabling cleanup trap"
+    trap cleanup_deployment EXIT INT TERM
+    export CLEANUP_TRAP_SET="true"
 }
 
 # 🔍 Step 1: Environment Validation
@@ -90,8 +114,12 @@ step_validate_environment() {
     
     # Internet connectivity check
     if ! check_internet; then
-        if ! interactive_confirm "No internet detected. Continue anyway?" "false"; then
-            print_log "FATAL" "Internet connectivity required for deployment"
+        if [[ "$IS_INTERACTIVE" == "true" ]]; then
+            if ! interactive_confirm "No internet detected. Continue anyway?" "false"; then
+                print_log "FATAL" "Internet connectivity required for deployment"
+            fi
+        else
+            print_log "WARNING" "No internet detected, continuing anyway in non-interactive mode"
         fi
     fi
     
@@ -111,11 +139,16 @@ step_check_dependencies() {
     
     # Check node_modules
     if [[ ! -d "node_modules" ]]; then
-        if interactive_confirm "Dependencies not installed. Install now?" "true"; then
-            print_log "INFO" "📥 Installing dependencies..."
-            retry_command 3 2 "npm install" "dependency installation"
+        if [[ "$IS_INTERACTIVE" == "true" ]]; then
+            if interactive_confirm "Dependencies not installed. Install now?" "true"; then
+                print_log "INFO" "📥 Installing dependencies..."
+                retry_command 3 2 "npm install" "dependency installation"
+            else
+                print_log "FATAL" "Dependencies required for build process"
+            fi
         else
-            print_log "FATAL" "Dependencies required for build process"
+            print_log "INFO" "📥 Installing dependencies (non-interactive mode)..."
+            retry_command 3 2 "npm install" "dependency installation"
         fi
     fi
     
@@ -137,7 +170,12 @@ step_build_project() {
     
     # Clean previous build
     if [[ -d "$BUILD_DIR" ]]; then
-        if interactive_confirm "Previous build found. Clean it first?" "true"; then
+        if [[ "$IS_INTERACTIVE" == "true" ]]; then
+            if interactive_confirm "Previous build found. Clean it first?" "true"; then
+                safe_remove "$BUILD_DIR" "previous build directory"
+            fi
+        else
+            print_log "INFO" "🧹 Cleaning previous build (non-interactive mode)..."
             safe_remove "$BUILD_DIR" "previous build directory"
         fi
     fi
@@ -188,15 +226,28 @@ step_create_isolated_workspace() {
     
     print_log "STATUS" "📁 Creating isolated workspace..."
     
+    # Temporarily disable cleanup trap during critical operations
+    disable_cleanup_trap
+    
     # Create temporary directory
     TEMP_DIR=$(create_secure_temp_dir "$APP_NAME")
-    TEMP_ARCHIVE="$TEMP_DIR/project.tar.gz"
+    TEMP_ARCHIVE="$TEMP_DIR/project.zip"
+    
+    print_log "DEBUG" "Created temporary directory: $TEMP_DIR"
+    print_log "DEBUG" "Archive will be: $TEMP_ARCHIVE"
+    
+    # Re-enable cleanup trap
+    enable_cleanup_trap
     
     # Check for uncommitted changes
     if ! git diff --quiet || ! git diff --cached --quiet; then
         local has_changes="true"
-        interactive_confirm "Uncommitted changes detected. Continue?" "true" \
-            "Warning: The deployment will use the current committed state, not uncommitted changes."
+        if [[ "$IS_INTERACTIVE" == "true" ]]; then
+            interactive_confirm "Uncommitted changes detected. Continue?" "true" \
+                "Warning: The deployment will use the current committed state, not uncommitted changes."
+        else
+            print_log "WARNING" "Uncommitted changes detected. Using committed state for deployment."
+        fi
     fi
     
     print_log "SUCCESS" "✅ Temporary workspace created: $TEMP_DIR"
@@ -210,37 +261,50 @@ step_create_project_archive() {
     
     print_log "STATUS" "📦 Creating project archive..."
     
+    # Temporarily disable cleanup trap during archive creation
+    disable_cleanup_trap
+    
     local start_time
     start_time=$(date +%s)
     
-    # Create archive with optimized compression
-    local exclude_patterns=(
-        "node_modules/*"
-        ".git/objects/*"
-        ".git/logs/*"
-        "*.log"
-        ".DS_Store"
-        "Thumbs.db"
-        "*.tmp"
-        "coverage/*"
-        ".nyc_output/*"
-        "dist/*"
-        ".next/*"
-        ".cache/*"
-    )
-    
-    local exclude_args=""
-    for pattern in "${exclude_patterns[@]}"; do
-        exclude_args="$exclude_args --exclude=$pattern"
-    done
-    
     print_log "INFO" "🗜️ Creating compressed archive..."
-    if ! tar czf "$TEMP_ARCHIVE" $exclude_args . 2>/dev/null; then
+    
+    # Verify temporary directory still exists
+    if [[ ! -d "$TEMP_DIR" ]]; then
+        print_log "FATAL" "Temporary directory disappeared: $TEMP_DIR (cleanup trap may have been executed prematurely)"
+    fi
+    
+    # Verify archive path is valid
+    if [[ -z "$TEMP_ARCHIVE" ]]; then
+        print_log "FATAL" "Archive path not set"
+    fi
+    
+    print_log "DEBUG" "Archive path: $TEMP_ARCHIVE"
+    print_log "DEBUG" "Temp directory exists: $(test -d "$TEMP_DIR" && echo "yes" || echo "no")"
+    
+    # Create ZIP archive with exclusions (much simpler than tar!)
+    if ! zip -0 -r -q "$TEMP_ARCHIVE" . \
+        -x "node_modules/*" \
+        -x ".git/objects/pack/*" \
+        -x ".git/logs/*" \
+        -x ".git/refs/remotes/origin/*" \
+        -x "*.log" \
+        -x ".DS_Store" \
+        -x "Thumbs.db" \
+        -x "*.tmp" \
+        -x "coverage/*" \
+        -x ".nyc_output/*" \
+        -x "dist/*" \
+        -x ".next/*" \
+        -x ".vercel/*" \
+        -x ".cache/*" \
+        -x "*.swp" \
+        -x "*.swo"; then
         print_log "FATAL" "Failed to create project archive"
     fi
     
     # Verify archive integrity
-    if ! tar tzf "$TEMP_ARCHIVE" >/dev/null 2>&1; then
+    if ! unzip -t "$TEMP_ARCHIVE" >/dev/null 2>&1; then
         print_log "FATAL" "Archive integrity check failed"
     fi
     
@@ -249,6 +313,9 @@ step_create_project_archive() {
     local duration=$((end_time - start_time))
     local archive_size
     archive_size=$(stat -f%z "$TEMP_ARCHIVE" 2>/dev/null || stat -c%s "$TEMP_ARCHIVE" 2>/dev/null || echo "0")
+    
+    # Re-enable cleanup trap
+    enable_cleanup_trap
     
     print_log "SUCCESS" "✅ Archive created in $(format_duration $duration) ($(format_file_size $archive_size))"
 }
@@ -266,7 +333,7 @@ step_deploy_from_isolated_env() {
     mkdir -p "$work_dir"
     
     print_log "INFO" "📤 Extracting project to temporary workspace..."
-    if ! tar xzf "$TEMP_ARCHIVE" -C "$work_dir" 2>/dev/null; then
+    if ! unzip -q "$TEMP_ARCHIVE" -d "$work_dir" 2>/dev/null; then
         print_log "FATAL" "Failed to extract project archive"
     fi
     
@@ -309,10 +376,17 @@ perform_github_pages_deployment() {
     # Switch to or create gh-pages branch
     if git show-ref --verify --quiet "refs/heads/$GH_PAGES_BRANCH"; then
         print_log "INFO" "🔄 Switching to existing $GH_PAGES_BRANCH branch..."
-        git checkout "$GH_PAGES_BRANCH" --quiet
         
-        # Clean existing files (except .git)
-        find . -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} \; 2>/dev/null || true
+        # Try to checkout, if it fails due to corruption, recreate the branch
+        if ! git checkout "$GH_PAGES_BRANCH" --quiet 2>/dev/null; then
+            print_log "WARNING" "Existing $GH_PAGES_BRANCH branch appears corrupted, recreating..."
+            git branch -D "$GH_PAGES_BRANCH" 2>/dev/null || true
+            git checkout --orphan "$GH_PAGES_BRANCH" --quiet
+            git rm -rf . --quiet 2>/dev/null || true
+        else
+            # Clean existing files (except .git)
+            find . -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} \; 2>/dev/null || true
+        fi
     else
         print_log "INFO" "🆕 Creating new $GH_PAGES_BRANCH branch..."
         git checkout --orphan "$GH_PAGES_BRANCH" --quiet
@@ -371,16 +445,26 @@ perform_github_pages_deployment() {
         print_log "INFO" "🏃 DRY RUN: Would push to origin/$GH_PAGES_BRANCH"
         print_log "INFO" "   Commit: $commit_message"
     else
-        if interactive_confirm "Push to GitHub Pages?" "true"; then
-            print_log "STATUS" "🚀 Pushing to GitHub Pages..."
+        if [[ "$IS_INTERACTIVE" == "true" ]]; then
+            if interactive_confirm "Push to GitHub Pages?" "true"; then
+                print_log "STATUS" "🚀 Pushing to GitHub Pages..."
+                
+                if retry_command 3 2 "git push origin $GH_PAGES_BRANCH" "GitHub Pages push"; then
+                    print_log "SUCCESS" "🎉 Successfully deployed to GitHub Pages!"
+                else
+                    print_log "FATAL" "Failed to push to GitHub Pages"
+                fi
+            else
+                print_log "INFO" "📦 Deployment prepared but not pushed (user choice)"
+            fi
+        else
+            print_log "STATUS" "🚀 Pushing to GitHub Pages (non-interactive mode)..."
             
             if retry_command 3 2 "git push origin $GH_PAGES_BRANCH" "GitHub Pages push"; then
                 print_log "SUCCESS" "🎉 Successfully deployed to GitHub Pages!"
             else
                 print_log "FATAL" "Failed to push to GitHub Pages"
             fi
-        else
-            print_log "INFO" "📦 Deployment prepared but not pushed (user choice)"
         fi
     fi
 }

@@ -72,7 +72,7 @@ detect_framework() {
     local project_root="${1:-$(pwd)}"
     
     if [[ -f "$project_root/next.config.js" ]] || [[ -f "$project_root/next.config.mjs" ]]; then
-        echo "nextjs"
+        echo "next"
     elif [[ -f "$project_root/vite.config.js" ]] || [[ -f "$project_root/vite.config.ts" ]]; then
         echo "vite"
     elif [[ -f "$project_root/astro.config.mjs" ]]; then
@@ -88,7 +88,7 @@ detect_framework() {
     elif [[ -f "$project_root/package.json" ]]; then
         # Fallback: check package.json for framework indicators
         if grep -q '"next"' "$project_root/package.json"; then
-            echo "nextjs"
+            echo "next"
         elif grep -q '"vite"' "$project_root/package.json"; then
             echo "vite"
         elif grep -q '"@astrojs"' "$project_root/package.json"; then

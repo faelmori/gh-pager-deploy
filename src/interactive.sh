@@ -268,7 +268,10 @@ detect_interactive_mode() {
 
 # 🎯 Initialize interactive mode
 init_interactive() {
-    detect_interactive_mode
+    if ! detect_interactive_mode; then
+        print_log "INFO" "Running in non-interactive mode"
+        return 0
+    fi
     
     # Set up step counters
     export CURRENT_STEP="${CURRENT_STEP:-1}"

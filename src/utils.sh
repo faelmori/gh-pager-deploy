@@ -186,13 +186,14 @@ create_secure_temp_dir() {
     temp_dir="$(mktemp -d "/tmp/${prefix}.XXXXXX")"
     
     if [[ ! -d "$temp_dir" ]]; then
-        print_log "FATAL" "Failed to create temporary directory"
+        echo "FATAL: Failed to create temporary directory" >&2
+        return 1
     fi
     
     # Set secure permissions
     chmod 700 "$temp_dir"
     
-    print_log "DEBUG" "Created secure temporary directory: $temp_dir"
+    # Only echo the directory path, no logging
     echo "$temp_dir"
 }
 
