@@ -29,6 +29,8 @@ help: ## Show this help message
 	@echo "  make deploy-auto     # Automated deployment"
 	@echo "  make test            # Run all tests"
 	@echo "  make install         # Install globally"
+	@echo "  make demo            # Interactive demo with rafa-mori"
+	@echo "  make test-with-rafa-mori  # Test with real Next.js project"
 
 # 🚀 Main deployment targets
 deploy: ## Deploy with interactive mode (default)
@@ -66,6 +68,23 @@ test-interactive: ## Test interactive functions specifically
 	@echo "$(BLUE)🤖 Testing interactive functions...$(RESET)"
 	@chmod +x $(TEST_SCRIPT)
 	@IS_INTERACTIVE=true $(TEST_SCRIPT)
+
+# 🎯 Real project testing targets
+test-with-rafa-mori: ## Test deployment with real Next.js project (rafa-mori)
+	@echo "$(BLUE)🧪 Testing with real Next.js project...$(RESET)"
+	@chmod +x $(DEPLOY_SCRIPT)
+	@cd ../rafa-mori && $(DEPLOY_SCRIPT) --dry-run --verbose
+
+test-rafa-mori-auto: ## Test automated deployment with rafa-mori project
+	@echo "$(BLUE)🤖 Testing automated deployment with rafa-mori...$(RESET)"
+	@chmod +x $(DEPLOY_SCRIPT)
+	@cd ../rafa-mori && IS_INTERACTIVE=false $(DEPLOY_SCRIPT) --dry-run --yes
+
+demo: ## Show interactive demo with rafa-mori project
+	@echo "$(BLUE)🎭 Interactive demo with real Next.js project...$(RESET)"
+	@echo "$(YELLOW)This will demonstrate the full interactive pipeline$(RESET)"
+	@chmod +x $(DEPLOY_SCRIPT)
+	@cd ../rafa-mori && $(DEPLOY_SCRIPT) --dry-run
 
 # 🔧 Development targets
 setup: ## Set up development environment
@@ -208,3 +227,4 @@ update: ## Update pages-deploy to latest version (if installed via git)
 .PHONY: help deploy deploy-auto deploy-dry deploy-verbose test test-verbose test-interactive
 .PHONY: setup install uninstall clean validate docs info debug status update
 .PHONY: deploy-nextjs deploy-vite deploy-astro quick ci-test ci-deploy
+.PHONY: test-with-rafa-mori test-rafa-mori-auto demo

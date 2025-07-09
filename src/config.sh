@@ -123,7 +123,7 @@ get_framework_config() {
             echo "${BUILD_DIRS[$framework]:-$DEFAULT_BUILD_DIR}"
             ;;
         "build_command")
-            echo "${BUILD_COMMANDS[$framework]:-npm run build}"
+            echo "${BUILD_COMMANDS[$framework]:-"npm run build"}"
             ;;
         *)
             echo ""
@@ -153,8 +153,12 @@ init_config() {
   export DETECTED_FRAMEWORK="${FRAMEWORK:-"$(detect_framework "$@")"}"
   export BUILD_COMMAND="${BUILD_COMMAND:-$(get_framework_config "$DETECTED_FRAMEWORK" "build_command")}"
   
-  # Path configuration
-  export SCRIPT_DIR="${SCRIPT_DIR:-$(dirname "$config_script")/..}"
+  # Path configuration (only set if not already defined)
+  if [[ -z "${SCRIPT_DIR:-}" ]]; then
+    local calculated_script_dir
+    calculated_script_dir="$(dirname "$config_script")/.."
+    export SCRIPT_DIR="$calculated_script_dir"
+  fi
   export PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")}"
 
   export -f detect_framework
